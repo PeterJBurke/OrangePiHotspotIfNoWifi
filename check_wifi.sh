@@ -325,7 +325,11 @@ sync_passwords() {
         sleep 5
     fi
 }
-sync_passwords
+# Profile state is owned by the pre-NetworkManager pass (--sync-only). Doing it
+# again here, against a running NM, produced "could not create profile" errors
+# and needless churn. If --sync-only never ran, the connect attempts below still
+# create what they need.
+[ "$SYNC_ONLY" = "1" ] && sync_passwords
 
 # --sync-only runs BEFORE NetworkManager starts, purely to get the profiles and
 # their priorities in place. Without this, NM has already picked a network by
@@ -412,7 +416,11 @@ type=wifi
 interface-name=${IFACE}
 autoconnect=true
 autoconnect-priority=${PRIO}
-autoconnect-retries=0
+# Bounded, deliberately. 0 means INFINITE in NetworkManager: with a wrong
+# password it would retry forever in the background and could fight the rescue
+# hotspot for the radio. A few attempts, then NM stands down and lets the
+# fallback own the interface.
+autoconnect-retries=3
 
 [wifi]
 mode=infrastructure
