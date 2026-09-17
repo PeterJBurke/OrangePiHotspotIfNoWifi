@@ -195,6 +195,37 @@ from `/etc/NetworkManager/system-connections/` when netplan is also present.
 hardware. Test it with `--sync-only` followed by `nmcli connection show` BEFORE
 relying on a reboot.
 
+## Do not run --sync-only on a live system (2026-09-17)
+
+`--sync-only` rebuilds NetworkManager's Wi-Fi profiles from the config file. It
+is meant to run **at boot, before NetworkManager starts**, when nothing is
+connected.
+
+Run on a live system it deletes the backing config of the active connection.
+NetworkManager drops that connection on its next reload. This was suggested to
+the user as a "safe verification" step; it dropped their SSH session and cost
+two hard reboots. The script now **refuses** to run this mode while
+NetworkManager is up and the interface is connected (override
+`MLR_FORCE_SYNC=1`, local console only).
+
+### What the incident proved
+
+The mechanism works. Afterwards NetworkManager had exactly the intended state:
+
+```
+wififailsafe-GL-MT3000-e23     priority 100
+wififailsafe-TP-Link_FD78_5G   priority 90
+```
+
+with the uuid5-derived UUIDs the generator produces. NetworkManager reads the
+keyfiles from `/etc/NetworkManager/system-connections/`, then migrates them into
+`/etc/netplan/90-NM-<uuid>.yaml` and regenerates them into `/run`. That
+migration is what tore down the live link — harmless at boot, destructive when
+connected.
+
+**So the profiles on this board are now correct and persistent.** The next boot
+should select GL-MT3000-e23 on priority, without any further intervention.
+
 ## Important distinction
 
 The 8-minute auto-revert exists **only in `test-ap-capability.sh`**.

@@ -342,6 +342,32 @@ if [ "$SYNC_ONLY" = "1" ]; then
     # /etc/netplan/90-NM-*.yaml. Both are rebuilt from the config file here, so
     # /etc/wifi-failsafe.conf is the single source of truth on every boot.
 
+    # ------------------------------------------------------------------
+    # HARD SAFETY GUARD.
+    #
+    # This mode rewrites NetworkManager's profiles from scratch. It is meant to
+    # run at boot, BEFORE NetworkManager starts, when nothing is connected.
+    #
+    # Run on a LIVE system it deletes the backing config of the connection you
+    # are using; NM then drops that connection on its next reload. That happened
+    # to a real user over SSH and cost two hard reboots. Never again: if
+    # NetworkManager is up and a Wi-Fi link is active, refuse.
+    # ------------------------------------------------------------------
+    if [ "${MLR_FORCE_SYNC:-0}" != "1" ]; then
+        if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+            wstate="$(nmcli -t -f DEVICE,STATE device 2>/dev/null | grep "^${IFACE}:" | cut -d: -f2)"
+            if [ "$wstate" = "connected" ]; then
+                log "REFUSING to run --sync-only: NetworkManager is running and"
+                log "  ${IFACE} is connected. This mode rebuilds NM's profiles and"
+                log "  would drop your connection -- including an SSH session."
+                log "  It is meant to run at boot, before NetworkManager starts."
+                log "  It will apply by itself on the next reboot."
+                log "  (override with MLR_FORCE_SYNC=1 only from a local console)"
+                exit 0
+            fi
+        fi
+    fi
+
     KEYDIR=/etc/NetworkManager/system-connections
     mkdir -p "$KEYDIR"
 
