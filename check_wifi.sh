@@ -121,10 +121,30 @@ if [ "$DRY_RUN" = "1" ]; then
     nmcli -t -f SSID,SIGNAL dev wifi list --rescan yes 2>/dev/null \
         | awk -F: 'NF&&$1!=""{printf "   %-32s signal %s\n", $1, $2}' | sort -u | head -15
     echo
-    echo "NOTE: NetworkManager stores its own copy of each password. Changing a"
-    echo "      password in $CONF does NOT stop the board connecting with the"
-    echo "      one NetworkManager already saved. To genuinely test the"
-    echo "      fallback, make the network unreachable — see docs/TESTING.md."
+    echo "Password check — does NetworkManager agree with $CONF?"
+    for entry in "${SSIDS[@]}"; do
+        _s="${entry%%|*}"; _p="${entry#*|}"
+        _u="$(nmcli -t -f NAME,UUID,TYPE connection show 2>/dev/null \
+            | awk -F: '$3=="802-11-wireless"{print $2}' \
+            | while read -r u; do
+                  [ "$(nmcli -g 802-11-wireless.ssid connection show "$u" 2>/dev/null)" = "$_s" ] && echo "$u"
+              done | head -1)"
+        if [ -z "$_u" ]; then
+            printf "   %-32s no saved profile yet (will be created)\n" "$_s"
+        else
+            _st="$(nmcli -s -g 802-11-wireless-security.psk connection show "$_u" 2>/dev/null)"
+            if [ "$_st" = "$_p" ]; then
+                printf "   %-32s matches\n" "$_s"
+            else
+                printf "   %-32s DIFFERS — at boot the config value wins\n" "$_s"
+            fi
+        fi
+    done
+    echo
+    echo "NOTE: at boot, passwords from $CONF are pushed into NetworkManager,"
+    echo "      so this file is the single source of truth. A wrong password"
+    echo "      here WILL break that network — which is what makes the hotspot"
+    echo "      fallback testable. See docs/TESTING.md."
     echo
     exit 0
 fi
@@ -146,6 +166,56 @@ ssid_is_wanted() {
     for e in "${SSIDS[@]}"; do [ "$cur" = "${e%%|*}" ] && return 0; done
     return 1
 }
+
+# ------------------------------------ 0. make the config file authoritative
+# NetworkManager keeps its own copy of every Wi-Fi password. If the config file
+# and NM disagree, NM wins -- which meant a password change here had no effect,
+# and the fallback could never be tested honestly.
+#
+# So: before judging anything, push the config's passwords into the matching NM
+# profiles. The config file becomes the single source of truth.
+#
+# Consequence worth knowing: a typo here will now genuinely break a working
+# connection. That is the point -- but it is why the hotspot fallback exists.
+sync_passwords() {
+    local entry ssid pass uuid stored changed_active=0 n=0
+    local active_uuid
+    active_uuid="$(nmcli -t -f GENERAL.CON-UUID device show "$IFACE" 2>/dev/null | cut -d: -f2-)"
+
+    for entry in "${SSIDS[@]}"; do
+        ssid="${entry%%|*}"; pass="${entry#*|}"
+        uuid="$(nmcli -t -f NAME,UUID,TYPE connection show 2>/dev/null \
+            | awk -F: '$3=="802-11-wireless"{print $2}' \
+            | while read -r u; do
+                  [ "$(nmcli -g 802-11-wireless.ssid connection show "$u" 2>/dev/null)" = "$ssid" ] && echo "$u"
+              done | head -1)"
+        [ -n "$uuid" ] || continue    # no profile yet; it gets created on connect
+
+        stored="$(nmcli -s -g 802-11-wireless-security.psk connection show "$uuid" 2>/dev/null)"
+        if [ "$stored" != "$pass" ]; then
+            log "updating stored password for '$ssid' from $CONF"
+            nmcli connection modify "$uuid" \
+                802-11-wireless-security.key-mgmt wpa-psk \
+                802-11-wireless-security.psk "$pass" 2>/dev/null || \
+                log "  WARNING: could not update '$ssid'"
+            n=$((n+1))
+            [ "$uuid" = "$active_uuid" ] && changed_active=1
+        fi
+    done
+
+    [ "$n" -gt 0 ] && log "synced $n password(s) from $CONF"
+
+    # If we changed the password of the connection we are riding on, bounce it
+    # so the new password is actually exercised rather than assumed good.
+    if [ "$changed_active" = "1" ]; then
+        log "active connection's password changed — reconnecting to test it"
+        nmcli device disconnect "$IFACE" >/dev/null 2>&1
+        sleep 3
+        nmcli connection up "$active_uuid" >/dev/null 2>&1 || true
+        sleep 5
+    fi
+}
+sync_passwords
 
 # ------------------------------------------------- 1. let the network settle
 # This is the fix for the boot race. Do not judge until NM has had its chance.

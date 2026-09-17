@@ -29,55 +29,54 @@ sudo /usr/local/bin/check_wifi.sh --dry-run
 Shows the networks it will try, in order, what is currently in range, what the
 board is connected to now, and what it *would* do at boot. Changes nothing.
 
-## Why changing the password in the config does NOT test the fallback
+## The config file is the source of truth
 
-This catches people out, and it is worth understanding.
+NetworkManager keeps its own copy of every Wi-Fi password. If it and
+`/etc/wifi-failsafe.conf` disagree, NM would normally win — so editing a
+password here used to have no effect at all.
 
-**NetworkManager keeps its own copy of every Wi-Fi password**, in its connection
-profile. `/etc/wifi-failsafe.conf` is read *only* by `check_wifi.sh`. So if you
-put a deliberately wrong password in the config file, nothing happens: the board
-still connects normally using the password NetworkManager already has, and
-`check_wifi.sh` correctly sees "I am on a network in my list" and stands down.
+Since 2026-09-17, `check_wifi.sh` **pushes the config's passwords into
+NetworkManager at every boot**. Whatever is in `/etc/wifi-failsafe.conf` is what
+the board will use.
 
-Its job is to answer *"am I on a wanted network?"*, not *"does my config's
-password match?"*.
+Two consequences:
 
-Remember too that `check_wifi.service` runs **once at boot**. Editing the config
-does nothing until you reboot.
+* Changing a password here now genuinely changes behaviour, so the fallback can
+  be tested honestly.
+* A typo here **will** break a working connection. That is the trade-off for
+  having one source of truth, and it is why the hotspot fallback exists.
 
-### How to really test the fallback
+If the password of the currently-active connection changes, the script bounces
+the link so the new password is actually exercised, rather than assumed good.
 
-Pick whichever is least disruptive. All of them make the board genuinely unable
-to reach your network, which is the only thing that triggers the fallback.
-
-**A. Break NetworkManager's stored password** (most convenient, fully reversible)
+Check agreement before rebooting:
 
 ```bash
-sudo nmcli connection modify 'Orange Pi wireless' wifi-sec.psk 'deliberately-wrong'
+sudo /usr/local/bin/check_wifi.sh --dry-run
+```
+
+It prints `matches` or `DIFFERS` per network, and changes nothing.
+
+Remember `check_wifi.service` runs **once at boot** — config edits take effect
+on the next reboot.
+
+### How to test the fallback
+
+**A. Wrong password in the config** (now sufficient on its own)
+
+```bash
+sudo nano /etc/wifi-failsafe.conf     # break the password of your main network
 sudo reboot
 ```
 
-At boot the board cannot join, so `check_wifi.sh` tries each network in your
-config — note it will *repair* the password from the config file if the config
-has the right one — and starts the hotspot if none work.
+At boot the board pushes that wrong password into NetworkManager, fails to
+join, tries your other networks in order, and starts the hotspot if none work.
 
-To undo, once you are back in (via the hotspot at `10.42.0.1`, or by fixing it):
-
-```bash
-sudo nmcli connection modify 'Orange Pi wireless' wifi-sec.psk 'your-real-password'
-sudo reboot
-```
-
-> If your config file still lists the correct password for that SSID, the script
-> will fix the profile and reconnect — which is a *successful* test of the retry
-> path, just not of the hotspot. To force the hotspot, put a wrong password in
-> **both** the config and the NM profile, or use option B or C.
+Undo by putting the correct password back and rebooting.
 
 **B. Turn the router off** — the most realistic test, no changes to the board.
-Power down your access point, reboot the Pi, and watch for the hotspot.
 
-**C. Take it out of range** — carry the board somewhere with no known network and
-power it up. This is the real field scenario.
+**C. Take it out of range** — the real field scenario.
 
 ## Testing the boot behaviour safely
 

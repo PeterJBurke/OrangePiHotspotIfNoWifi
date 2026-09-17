@@ -78,7 +78,8 @@ Your networks and the hotspot name/password live in one file:
 sudo nano /etc/wifi-failsafe.conf
 ```
 
-You can list more than one network; they are tried in order:
+You can list more than one network; they are tried in order. Note there are
+**no commas** between the lines:
 
 ```
 SSIDS=(
@@ -89,6 +90,10 @@ SSIDS=(
 HOTSPOT_SSID="OPiRescue"
 HOTSPOT_PASSWORD="orangepi123"
 ```
+
+This file is the source of truth: at every boot its passwords are pushed into
+NetworkManager, so what you put here is what the Pi uses. Changes take effect on
+the next reboot.
 
 ## Checking it works
 
