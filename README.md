@@ -224,6 +224,7 @@ check_wifi.timer             OPTIONAL periodic re-check (off by default)
 wifi-restore.sh              dead-man's-switch payload: kill AP, restore Wi-Fi
 test-ap-capability.sh        prove AP mode works, with recovery armed first
 wifi-failsafe.conf.template  config template
+docs/HANDOFF.md              current state and the next step
 docs/RECOVERY.md             rebuild from a blank SD card
 docs/BOARD-NOTES.md          measured hardware facts for this board
 ```
