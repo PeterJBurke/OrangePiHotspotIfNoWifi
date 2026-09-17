@@ -39,10 +39,12 @@ echo
 echo "=== Arming recovery ==="
 systemctl stop wifi-deadman.timer   2>/dev/null
 systemctl stop wifi-deadman-reboot.timer 2>/dev/null
-systemd-run --on-active="${MINS}min" --unit=wifi-deadman \
+# AccuracySec=1s matters: systemd's default is 1 MINUTE, so timers get batched
+# and can fire up to a minute late. For a recovery deadline, fire on time.
+systemd-run --on-active="${MINS}min" --timer-property=AccuracySec=1s --unit=wifi-deadman \
     "$DIR/wifi-restore.sh" >/dev/null 2>&1 \
     && echo "  dead-man's switch armed: restores Wi-Fi in ${MINS} min"
-systemd-run --on-active="${REBOOT_MINS}min" --unit=wifi-deadman-reboot \
+systemd-run --on-active="${REBOOT_MINS}min" --timer-property=AccuracySec=1s --unit=wifi-deadman-reboot \
     /usr/sbin/reboot >/dev/null 2>&1 \
     && echo "  fallback armed: REBOOT in ${REBOOT_MINS} min if still unreachable"
 
