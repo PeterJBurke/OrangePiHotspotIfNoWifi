@@ -40,6 +40,7 @@ SRC_CHECK="$(fetch check_wifi.sh)"
 SRC_REST="$(fetch wifi-restore.sh)"
 SRC_SVC="$(fetch check_wifi.service)"
 SRC_TMR="$(fetch check_wifi.timer)"
+SRC_PRE="$(fetch wifi-failsafe-profiles.service)"
 ok "components ready"
 
 # ------------------------------------------------------------------- 1. board
@@ -68,6 +69,7 @@ install -m755 "$SRC_CHECK" /usr/local/bin/check_wifi.sh
 install -m755 "$SRC_REST"  /usr/local/bin/wifi-restore.sh
 install -m644 "$SRC_SVC"   /etc/systemd/system/check_wifi.service
 install -m644 "$SRC_TMR"   /etc/systemd/system/check_wifi.timer
+install -m644 "$SRC_PRE"   /etc/systemd/system/wifi-failsafe-profiles.service
 systemctl daemon-reload
 ok "scripts and services installed"
 
@@ -90,7 +92,9 @@ if [ "${MLR_NO_ENABLE:-0}" = "1" ]; then
     warn "MLR_NO_ENABLE=1 — installed but NOT enabled"
 else
     systemctl enable check_wifi.service >/dev/null 2>&1
+    systemctl enable wifi-failsafe-profiles.service >/dev/null 2>&1
     ok "enabled — it will run at every boot"
+    ok "profiles are written before NetworkManager starts, so priorities apply"
 fi
 
 HS_SSID="$(grep -oP '^HOTSPOT_SSID="\K[^"]+' "$CONF" 2>/dev/null || echo OPiRescue)"

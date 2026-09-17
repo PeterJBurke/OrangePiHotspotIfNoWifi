@@ -1,0 +1,20 @@
+[Unit]
+Description=Write Wi-Fi profiles and priorities before NetworkManager starts
+Documentation=https://github.com/PeterJBurke/OrangePiHotspotIfNoWifi
+# This is the whole point of this unit: NetworkManager decides which network to
+# join the moment it starts. A priority set after that is ignored until the next
+# boot. So the profiles must exist, with the right passwords and priorities,
+# BEFORE NetworkManager is running.
+Before=NetworkManager.service
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/check_wifi.sh --sync-only
+RemainAfterExit=no
+User=root
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

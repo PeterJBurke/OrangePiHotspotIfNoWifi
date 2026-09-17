@@ -29,6 +29,34 @@ sudo /usr/local/bin/check_wifi.sh --dry-run
 Shows the networks it will try, in order, what is currently in range, what the
 board is connected to now, and what it *would* do at boot. Changes nothing.
 
+## How the config reaches NetworkManager
+
+On Ubuntu the chain is **netplan -> NetworkManager**. `nmcli` changes are written
+to `/etc/netplan/90-NM-<uuid>.yaml`, and netplan regenerates the real profiles
+into `/run/NetworkManager/system-connections/` at every boot. So NetworkManager's
+"memory" is really a pair of generated files, not something you edit.
+
+That caused a subtle failure. `check_wifi.service` is ordered *after*
+NetworkManager, but NM picks a network the instant it starts:
+
+```
+14:24:46  NetworkManager: Activation: starting connection 'Orange Pi wireless'
+14:24:47  check_wifi.sh sets GL-MT3000-e23 priority to 100   <- one second too late
+```
+
+A priority set after NM has chosen is ignored until the next boot. The board sat
+on the second-choice network while the log honestly reported it had tried.
+
+**Fix:** a second unit, `wifi-failsafe-profiles.service`, runs
+`check_wifi.sh --sync-only` **before NetworkManager starts**. It cannot use
+`nmcli` there (nmcli talks to NM over D-Bus), so it writes NetworkManager
+keyfiles directly into `/etc/NetworkManager/system-connections/`, one per
+configured network, highest priority first — after clearing the netplan-generated
+Wi-Fi profiles. NetworkManager then starts with exactly what the config file
+says, and makes the right choice on the first attempt.
+
+UUIDs are derived from the SSID, so they stay stable across boots.
+
 ## The config file is the source of truth
 
 NetworkManager keeps its own copy of every Wi-Fi password. If it and
