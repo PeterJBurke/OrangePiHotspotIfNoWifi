@@ -280,6 +280,13 @@ cat /var/log/wifi-failsafe.log                                      # what happe
 nmcli device status; nmcli connection show                          # current state
 ```
 
+## Current state of this deployment
+
+[docs/HANDOFF.md](docs/HANDOFF.md) — what is installed and proven on the author's
+board, the AP test result, and the gotchas found along the way. Useful if you are
+picking this up cold, or if something stops working and you want to know what
+"working" looked like.
+
 ## If it all goes wrong
 
 [docs/RECOVERY.md](docs/RECOVERY.md) — flashing a new image, getting back onto
