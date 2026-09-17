@@ -1,301 +1,150 @@
-# OrangePiHotspotIfNoWifi
+# Outline
 
-Automatically fall back to a Wi-Fi hotspot on an **Orange Pi Zero 3W** when it
-can't reach any of your known networks — so a headless board with no Ethernet
-doesn't become unreachable.
+This makes an Orange Pi Zero 3W create its own WiFi hotspot if it cannot connect
+to your WiFi.
 
-This is the Orange Pi counterpart to
-[RaspberryPiHotspotIfNoWifi](https://github.com/PeterJBurke/RaspberryPiHotspotIfNoWifi),
-**rewritten rather than ported.** The original's logic is sound, but installed
-unchanged on this hardware it locks you out on the next reboot. See
-[Why this is a rewrite](#why-this-is-a-rewrite).
+Useful for headless boards with no Ethernet port: if the Pi can't find your
+network, you can still reach it by joining the hotspot it creates.
 
-Tested on: Orange Pi Zero 3W, Allwinner **A733** (`sun60iw2`), Ubuntu 26.04,
-kernel 6.6.98, NetworkManager 1.54.3, `aicwf_sdio` Wi-Fi.
+Tested in 2026 on Orange Pi Zero 3W (Allwinner A733) with Ubuntu 26.04.
 
-**Confirmed working on that hardware.** The hotspot comes up on 2.4 GHz
-channel 11 at `10.42.0.1` (NetworkManager chooses 2.4 GHz even when the station
-link is 5 GHz, which is good for client compatibility), and the dead-man's
-switch restored the normal connection punctually at 8 minutes.
+## Target hardware/prerequisites
 
----
+* SD Card
+* Orange Pi Zero 3W
+* Ubuntu image from Orange Pi (this was built on Ubuntu 26.04 "Resolute")
+* Your WiFi network name and password
 
-## The short version
+## Installing
 
-```bash
-git clone https://github.com/PeterJBurke/OrangePiHotspotIfNoWifi.git
-cd OrangePiHotspotIfNoWifi
+Download and install the Orange Pi Ubuntu image from:
+```
+http://www.orangepi.org/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-Zero-3W.html
+```
+Follow the instructions there to copy the image to an sd card.
 
-# Safe — none of these touch your Wi-Fi:
-sudo ./install.sh                     # installs; enables NOTHING at boot
-sudo nano /etc/wifi-failsafe.conf     # your real SSIDs + passwords
-sudo ./dryrun-test.sh                 # proves the recovery timers work (~40s)
 
-# NOT safe — this one drops your connection on purpose:
-sudo ./test-ap-capability.sh
+Boot the Pi with the SD card and ssh into it.
 
-# After the test, back on your normal network:
-sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer
-sudo /usr/local/bin/check_wifi.sh     # must exit immediately, touching nothing
-sudo systemctl enable check_wifi.service   # ONLY if all of the above passed
+
+Get the script to install and configure the Pi:
+```
+wget -O install.sh https://raw.githubusercontent.com/PeterJBurke/OrangePiHotspotIfNoWifi/refs/heads/main/install.sh
+```
+Run script (takes about 30 seconds):
+```
+sudo chmod 777 ~/install.sh;
+sudo ~/install.sh
 ```
 
-> **`test-ap-capability.sh` will disconnect you.** That is deliberate — it is the
-> only way to find out whether this radio can really run a hotspot. Read
-> [Step 3](#step-3--prove-ap-mode-works) before running it.
-
----
-
-## Read this first
-
-**This board has no Ethernet.** Wi-Fi is the only way in. If it breaks and the
-hotspot doesn't come up, your options are physical access or reflashing the SD
-card. That risk is accepted here by design; the fallback is
-[docs/RECOVERY.md](docs/RECOVERY.md), which takes ~30–45 minutes.
-
-Everything below exists to make that outcome unlikely.
-
----
-
-## Step 1 — Install
-
-```bash
-sudo ./install.sh
+Then put your WiFi network name and password in the config file:
 ```
+sudo nano /etc/wifi-failsafe.conf
+```
+Change this line:
+```
+  "CHANGEME|PUT_THE_REAL_PASSWORD_HERE"
+```
+to your own network, for example:
+```
+  "MyHomeWiFi|mypassword123"
+```
+Save with **Ctrl+X**, then **Y**, then **Enter**.
 
-This installs the scripts and systemd units, creates `/etc/wifi-failsafe.conf`
-(mode `0600`), enables `NetworkManager-wait-online.service`, and disables and
-masks `hostapd` and `dnsmasq` — both are installed and enabled on the stock
-image and both fight NetworkManager's hotspot.
+Done!
 
-**It deliberately does not enable anything at boot.** Installing and arming are
-separate steps, so you can prove the hotspot works before trusting it.
+## Using it
 
-## Step 2 — Configure
+Nothing to do day to day. The Pi connects to your WiFi as normal.
 
-```bash
+If it ever cannot reach your WiFi, it creates a hotspot instead:
+
+| | |
+|---|---|
+| Network | `OPiRescue` |
+| Password | `orangepi123` |
+| Then ssh to | `orangepi@10.42.0.1` |
+
+Join that network from a laptop or phone and you are back in control of the Pi.
+
+The hotspot stays up until the Pi is rebooted, so it works out in the field with
+no network anywhere. On the next reboot it tries your normal WiFi first.
+
+## Changing the settings
+
+Your networks and the hotspot name/password live in one file:
+
+```
 sudo nano /etc/wifi-failsafe.conf
 ```
 
-```ini
+You can list more than one network; they are tried in order:
+
+```
 SSIDS=(
-  "YourHomeNetwork|yourpassword"
-  "YourPhoneHotspot|otherpassword"
+  "HomeWiFi|homepassword"
+  "PhoneHotspot|phonepassword"
 )
+
 HOTSPOT_SSID="OPiRescue"
-HOTSPOT_PASSWORD="orangepi123"      # 8+ characters
+HOTSPOT_PASSWORD="orangepi123"
 ```
 
-Networks are tried in order. Credentials live here, `root`-only — **not** inside
-the script, where the upstream project puts them in a world-readable file under
-`/usr/local/bin`.
-
-The script refuses to run while placeholder SSIDs (`Network_1`, `CHANGEME`) are
-present, rather than tearing down a working link to chase networks that don't
-exist.
-
-## Step 2.5 — Dry run (safe, touches nothing)
-
-```bash
-sudo ./dryrun-test.sh
-```
-
-Proves the recovery machinery works — delayed timers, detached jobs, logging —
-**without touching the radio**. Takes ~40 s. If this does not say `ALL GOOD`, do
-not run the real test: the auto-recovery would not fire either.
-
-## Step 3 — Prove AP mode works
-
-**This is the step that matters.** Your Wi-Fi chip is an AIC8800 with the
-`aicwf_sdio` driver. `iw list` claims AP support, but vendor SDIO drivers often
-don't deliver it, and the board associates on 5 GHz where AP support is patchier
-still. If the hotspot silently fails, the fallback you're relying on isn't there.
-
-```bash
-sudo ./test-ap-capability.sh
-```
-
-Before touching the radio, it:
-
-1. Aborts immediately if the radio doesn't advertise AP mode.
-2. Arms a **dead-man's switch** — in 8 minutes, `wifi-restore.sh` tears down any
-   hotspot and forces your known-good profile back up.
-3. Arms a **reboot** at 14 minutes as a second layer. The rescue AP is
-   `autoconnect=no` and your normal profile is `autoconnect=yes`, so a reboot
-   always returns you to your usual network.
-4. Starts the hotspot **detached** via `systemd-run`, so it survives your SSH
-   session dying — which it will, the moment the radio switches to AP mode.
-
-**You will lose your SSH session. That is the test.**
-
-- **Hotspot appears:** join `OPiRescue`, then `ssh orangepi@10.42.0.1`. Disarm
-  with `sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer`, then
-  `sudo /usr/local/bin/wifi-restore.sh`.
-- **Hotspot doesn't appear:** do nothing. Wi-Fi returns by itself in 8 minutes;
-  if that fails, the board reboots at 14 and comes back normally.
-
-Either way the verdict is in `/var/log/wifi-failsafe.log`. Once you are back on
-your normal network:
-
-```bash
-sudo ./check-result.sh
-sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer
-```
-
-> **Do not skip the `stop`.** The reboot fallback is scheduled 6 minutes after
-> the restore and **does not cancel itself when the restore succeeds** — that is
-> deliberate, so it still fires if the restore fails. After a successful test it
-> is left armed and will reboot the board minutes later, which is harmless but
-> baffling. `check-result.sh` lists anything still armed.
-
-> **If you run Claude Code (or anything else needing internet) *on* this board:**
-> a hotspot gives the board no upstream internet, so those tools stop working
-> until normal Wi-Fi is restored. Local SSH to `10.42.0.1` still works fine.
-
-## Step 4 — Arm it
-
-First, run the boot script by hand while you are **connected to a known
-network**. This is the exact code that will run at every boot:
-
-```bash
-sudo /usr/local/bin/check_wifi.sh
-```
-
-It must report that it is connected and exit straight away:
+## Checking it works
 
 ```
-[wifi-failsafe] waiting up to 90s for wlan0 to settle...
-[wifi-failsafe] connected to 'YourNetwork' after 0s -- nothing to do.
+systemctl status check_wifi
 ```
 
-If it does anything else — scanning, reconnecting, starting a hotspot — **stop**
-and work out why before arming it. At boot there is nobody watching.
-
-Only then:
-
-```bash
-sudo systemctl enable check_wifi.service
-```
-
-Optional periodic re-check (**off by default, read the warning first**):
-
-```bash
-sudo systemctl enable --now check_wifi.timer
-```
-
-> On a flying vehicle, think carefully. A transient Wi-Fi dropout would convert
-> the board into a hotspot mid-mission and take the telemetry link with it.
-
----
-
-## Why this is a rewrite
-
-The upstream script is pure `nmcli` and touches no Raspberry-Pi-specific paths,
-so it *looks* portable. Five things break it here.
-
-### 1. A confirmed boot race — fatal
-
-Measured on this board:
+To see what it did on the last boot:
 
 ```
-multi-user.target reached  @  8.982s
-wlan0 associated           @ 15.3s      <- 6.3s LATER
+journalctl -u check_wifi -b
 ```
 
-`check_wifi.service` is `WantedBy=multi-user.target` and guards with
-`After=NetworkManager-wait-online.service` — but that service is **disabled** on
-this image, and `/etc/systemd/system/network-online.target.wants/` holds only
-`networking.service`. An `After=` on a unit that never starts is inert.
+For a full test of the hotspot, and for troubleshooting, see
+**[docs/TESTING.md](docs/TESTING.md)**.
 
-So it runs before Wi-Fi is up, decides "not connected", and converts a healthy
-Wi-Fi setup into a hotspot — **on every boot**.
+## How it works
 
-*Fixed:* poll up to 90 s for association before judging, and the installer
-actually enables `NetworkManager-wait-online.service`.
+At boot the Pi waits for WiFi to come up, then:
 
-### 2. It deletes the profile you depend on
+* If it connected to one of your networks — nothing happens.
+* If not, it tries each of your networks in turn.
+* If none of them work, it starts the `OPiRescue` hotspot on `10.42.0.1`.
 
-Upstream finds every profile matching a desired SSID and `nmcli connection
-delete`s it *before* reconnecting. One typo in the configured password
-permanently destroys the working profile.
+The hotspot is marked so it never takes over a normal boot, and the script never
+deletes the WiFi settings you rely on.
 
-*Fixed:* never delete. Update the password in place, or create a new profile.
-
-### 3. Unconfigured defaults tear down a live link
-
-Defaults are `Network_1/2/3`, so any real SSID fails the match: it disconnects,
-chases three networks that don't exist (~21 s), then builds a hotspot.
-
-*Fixed:* refuse to run with placeholder SSIDs.
-
-### 4. AP capability is assumed, not checked
-
-Upstream disconnects first and discovers the hotspot doesn't work afterwards —
-leaving neither Wi-Fi nor hotspot.
-
-*Fixed:* check AP capability **before** disturbing anything, and never replace a
-live connection with a hotspot.
-
-### 5. Passwords in a world-readable script
-
-*Fixed:* `/etc/wifi-failsafe.conf`, mode `0600`.
-
-### A bug found while testing this rewrite
-
-`nmcli -t -f GENERAL.CONNECTION device show wlan0` returns the **profile name** —
-on this image `Orange Pi wireless` — not the SSID it is actually joined to. An early
-draft compared the profile name against the SSID list, never matched, and would
-have torn down a healthy connection: the exact failure it was written to prevent.
-`current_ssid()` now resolves the profile to its real SSID with an
-`iw dev … link` fallback, verified against the live connection.
-
-Upstream gets this right, incidentally — it reads the SSID from `nmcli dev wifi`.
-
----
-
-## Files
+## Uninstalling
 
 ```
-install.sh                   installs everything; enables nothing
-dryrun-test.sh               proves the recovery machinery works, touches nothing
-check-result.sh              read the verdict after a test (read-only)
-check_wifi.sh                connect-or-hotspot logic
-check_wifi.service           systemd unit with ordering that actually works
-check_wifi.timer             OPTIONAL periodic re-check (off by default)
-wifi-restore.sh              dead-man's-switch payload: kill AP, restore Wi-Fi
-test-ap-capability.sh        prove AP mode works, with recovery armed first
-wifi-failsafe.conf.template  config template
-docs/HANDOFF.md              current state and the next step
-docs/RECOVERY.md             rebuild from a blank SD card
-docs/BOARD-NOTES.md          measured hardware facts for this board
+sudo systemctl disable --now check_wifi.service
+sudo rm /usr/local/bin/check_wifi.sh /usr/local/bin/wifi-restore.sh
+sudo rm /etc/systemd/system/check_wifi.service /etc/systemd/system/check_wifi.timer
+sudo rm /etc/wifi-failsafe.conf
 ```
 
-## Rescue commands
+## Notes for this board
 
-```bash
-sudo /usr/local/bin/wifi-restore.sh                                 # kill AP, restore Wi-Fi
-sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer    # disarm timers
-sudo systemctl disable check_wifi.service                           # stop it at boot
-cat /var/log/wifi-failsafe.log                                      # what happened
-nmcli device status; nmcli connection show                          # current state
-```
+The Orange Pi Zero 3W is not a Raspberry Pi, and a few things differ enough to
+matter. See **[docs/BOARD-NOTES.md](docs/BOARD-NOTES.md)** for the UART map, boot
+configuration, and the traps specific to the Allwinner A733.
 
-## Current state of this deployment
+If the Pi becomes unreachable and you have to start over, see
+**[docs/RECOVERY.md](docs/RECOVERY.md)**.
 
-[docs/HANDOFF.md](docs/HANDOFF.md) — what is installed and proven on the author's
-board, the AP test result, and the gotchas found along the way. Useful if you are
-picking this up cold, or if something stops working and you want to know what
-"working" looked like.
+## Authors
 
-## If it all goes wrong
+Peter Burke
 
-[docs/RECOVERY.md](docs/RECOVERY.md) — flashing a new image, getting back onto
-Wi-Fi headlessly via `/boot/orangepi_first_run.txt` (there's no Ethernet port, so
-this step is not optional), and re-applying this project and MAVLink Router.
+## License
 
-## Related
+The scripts in this repository are provided as-is.
 
-- [installmavlinkrouterorangepizero3w](https://github.com/PeterJBurke/installmavlinkrouterorangepizero3w)
-  — MAVLink Router on UART2 for the same board
-- [docs/BOARD-NOTES.md](docs/BOARD-NOTES.md) — UART map, boot config, and the
-  traps specific to the A733
+## Acknowledgments
+
+Adapted for the Orange Pi from
+[installmavlinkrouter2024](https://github.com/PeterJBurke/installmavlinkrouter2024)
+and [RaspberryPiHotspotIfNoWifi](https://github.com/PeterJBurke/RaspberryPiHotspotIfNoWifi).
+Why it is a rewrite rather than a port: **[docs/WHY-A-REWRITE.md](docs/WHY-A-REWRITE.md)**.
