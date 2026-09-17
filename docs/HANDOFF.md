@@ -2,58 +2,48 @@
 
 Last updated: 2026-09-17, immediately before the first AP capability test.
 
-## Where things stand
+## Where things stand (2026-09-17, latest)
 
-**DONE AND WORKING.** AP mode is proven on this hardware and the failsafe is
-armed at boot.
+**The network-selection side is working and proven on hardware.** The board
+selects the first network listed in `/etc/wifi-failsafe.conf` by priority, chosen
+by NetworkManager itself with no intervention from the script:
+
+```
+wlan0: connected: wififailsafe-GL-MT3000-e23   ip 192.168.8.143
+  wififailsafe-GL-MT3000-e23     priority 100
+  wififailsafe-TP-Link_FD78_5G   priority 90
+14:43:14  connected to 'GL-MT3000-e23' after 0s (first choice) -- nothing to do.
+```
 
 | | |
 |---|---|
-| Installed + configured | yes |
-| Dry run | passed (timer fired in 19s) |
-| **AP capability test** | **PASSED** — see below |
-| `check_wifi.service` enabled at boot | **yes** |
+| Installed + enabled at boot | yes |
+| Config file is the source of truth | yes — profiles rebuilt from it before NM starts |
+| First-listed network preferred | **proven on hardware** |
+| AP / hotspot mode supported by the radio | **proven** (earlier test) |
+| **Hotspot fallback firing for real** | **NOT yet tested** |
 | `check_wifi.timer` (periodic re-check) | disabled, deliberately |
-| `hostapd` / `dnsmasq` | masked |
-| `NetworkManager-wait-online` | enabled (fixes the boot race) |
 
-### AP test result, 2026-09-17
+### The one remaining test
 
-```
-13:02:53  hotspot UP    -- AP mode, channel 11 (2.4 GHz), 10.42.0.1
-13:10:44  dead-man's switch fired, punctually at 8 min
-13:10:45  AP profile deleted
-13:10:58  back on the normal network
-```
+Make every configured network unreachable and confirm `OPiRescue` appears:
+turn the first network off, leave a wrong password for the second, reboot.
+Expect the hotspot after roughly 2-3 minutes (90s settle, then ~30s per network
+before it gives up).
 
-The operator confirmed `OPiRescue` was visible and joinable from another device.
+**Escape hatch:** turn the first network back on and power-cycle. Its password is
+still correct at priority 100, so the board reconnects there. This test cannot
+strand the board the way the earlier ones could.
 
-Notable: NetworkManager placed the AP on **2.4 GHz channel 11** even though the
-station link was 5 GHz — good for client compatibility.
+### Settings that matter for that test
 
-The boot script was then run by hand while connected to a known network and
-behaved correctly:
-
-```
-[wifi-failsafe] waiting up to 90s for wlan0 to settle...
-[wifi-failsafe] connected to '<known ssid>' after 0s -- nothing to do.
-```
-
-Exited immediately, touched nothing. Only then was the service enabled.
-
-### One gotcha worth remembering
-
-After the test, `wifi-deadman.timer` had already fired and cleaned up, but
-**`wifi-deadman-reboot.timer` was still armed** and would have rebooted the board
-~3 minutes later. The reboot fallback is intentionally scheduled 6 minutes after
-the restore, so it survives a failed restore — but it does not cancel itself when
-the restore succeeds. After any successful test, run:
-
-```bash
-sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer
-```
-
-`check-result.sh` lists any timers still armed, for exactly this reason.
+* `autoconnect-retries=3` in the generated keyfiles. It was `0`, which in
+  NetworkManager means **infinite** — with a wrong password NM would retry
+  forever in the background and could contend with the rescue hotspot for the
+  radio.
+* The post-NetworkManager pass no longer rebuilds profiles. That is owned by the
+  pre-NM `--sync-only` pass; doing it twice produced `could not create profile`
+  errors against a live NM.
 
 ## Front page simplified, 2026-09-17
 
