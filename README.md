@@ -13,6 +13,11 @@ unchanged on this hardware it locks you out on the next reboot. See
 Tested on: Orange Pi Zero 3W, Allwinner **A733** (`sun60iw2`), Ubuntu 26.04,
 kernel 6.6.98, NetworkManager 1.54.3, `aicwf_sdio` Wi-Fi.
 
+**Confirmed working on that hardware.** The hotspot comes up on 2.4 GHz
+channel 11 at `10.42.0.1` (NetworkManager chooses 2.4 GHz even when the station
+link is 5 GHz, which is good for client compatibility), and the dead-man's
+switch restored the normal connection punctually at 8 minutes.
+
 ---
 
 ## The short version
@@ -20,13 +25,24 @@ kernel 6.6.98, NetworkManager 1.54.3, `aicwf_sdio` Wi-Fi.
 ```bash
 git clone https://github.com/PeterJBurke/OrangePiHotspotIfNoWifi.git
 cd OrangePiHotspotIfNoWifi
+
+# Safe — none of these touch your Wi-Fi:
 sudo ./install.sh                     # installs; enables NOTHING at boot
 sudo nano /etc/wifi-failsafe.conf     # your real SSIDs + passwords
-sudo ./test-ap-capability.sh          # prove the hotspot works, recoverably
-sudo systemctl enable check_wifi.service   # ONLY after the test passes
+sudo ./dryrun-test.sh                 # proves the recovery timers work (~40s)
+
+# NOT safe — this one drops your connection on purpose:
+sudo ./test-ap-capability.sh
+
+# After the test, back on your normal network:
+sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer
+sudo /usr/local/bin/check_wifi.sh     # must exit immediately, touching nothing
+sudo systemctl enable check_wifi.service   # ONLY if all of the above passed
 ```
 
-Read the rest before running step 4 — it will drop your SSH session on purpose.
+> **`test-ap-capability.sh` will disconnect you.** That is deliberate — it is the
+> only way to find out whether this radio can really run a hotspot. Read
+> [Step 3](#step-3--prove-ap-mode-works) before running it.
 
 ---
 
@@ -118,11 +134,19 @@ Before touching the radio, it:
 - **Hotspot doesn't appear:** do nothing. Wi-Fi returns by itself in 8 minutes;
   if that fails, the board reboots at 14 and comes back normally.
 
-Either way the verdict is in `/var/log/wifi-failsafe.log`. Afterwards:
+Either way the verdict is in `/var/log/wifi-failsafe.log`. Once you are back on
+your normal network:
 
 ```bash
 sudo ./check-result.sh
+sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer
 ```
+
+> **Do not skip the `stop`.** The reboot fallback is scheduled 6 minutes after
+> the restore and **does not cancel itself when the restore succeeds** — that is
+> deliberate, so it still fires if the restore fails. After a successful test it
+> is left armed and will reboot the board minutes later, which is harmless but
+> baffling. `check-result.sh` lists anything still armed.
 
 > **If you run Claude Code (or anything else needing internet) *on* this board:**
 > a hotspot gives the board no upstream internet, so those tools stop working
@@ -130,7 +154,24 @@ sudo ./check-result.sh
 
 ## Step 4 — Arm it
 
-Only once the hotspot is proven:
+First, run the boot script by hand while you are **connected to a known
+network**. This is the exact code that will run at every boot:
+
+```bash
+sudo /usr/local/bin/check_wifi.sh
+```
+
+It must report that it is connected and exit straight away:
+
+```
+[wifi-failsafe] waiting up to 90s for wlan0 to settle...
+[wifi-failsafe] connected to 'YourNetwork' after 0s -- nothing to do.
+```
+
+If it does anything else — scanning, reconnecting, starting a hotspot — **stop**
+and work out why before arming it. At boot there is nobody watching.
+
+Only then:
 
 ```bash
 sudo systemctl enable check_wifi.service
