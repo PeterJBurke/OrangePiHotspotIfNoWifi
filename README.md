@@ -78,6 +78,16 @@ The script refuses to run while placeholder SSIDs (`Network_1`, `CHANGEME`) are
 present, rather than tearing down a working link to chase networks that don't
 exist.
 
+## Step 2.5 — Dry run (safe, touches nothing)
+
+```bash
+sudo ./dryrun-test.sh
+```
+
+Proves the recovery machinery works — delayed timers, detached jobs, logging —
+**without touching the radio**. Takes ~40 s. If this does not say `ALL GOOD`, do
+not run the real test: the auto-recovery would not fire either.
+
 ## Step 3 — Prove AP mode works
 
 **This is the step that matters.** Your Wi-Fi chip is an AIC8800 with the
@@ -108,7 +118,15 @@ Before touching the radio, it:
 - **Hotspot doesn't appear:** do nothing. Wi-Fi returns by itself in 8 minutes;
   if that fails, the board reboots at 14 and comes back normally.
 
-Either way the verdict is in `/var/log/wifi-failsafe.log`.
+Either way the verdict is in `/var/log/wifi-failsafe.log`. Afterwards:
+
+```bash
+sudo ./check-result.sh
+```
+
+> **If you run Claude Code (or anything else needing internet) *on* this board:**
+> a hotspot gives the board no upstream internet, so those tools stop working
+> until normal Wi-Fi is restored. Local SSH to `10.42.0.1` still works fine.
 
 ## Step 4 — Arm it
 
@@ -198,6 +216,8 @@ Upstream gets this right, incidentally — it reads the SSID from `nmcli dev wif
 
 ```
 install.sh                   installs everything; enables nothing
+dryrun-test.sh               proves the recovery machinery works, touches nothing
+check-result.sh              read the verdict after a test (read-only)
 check_wifi.sh                connect-or-hotspot logic
 check_wifi.service           systemd unit with ordering that actually works
 check_wifi.timer             OPTIONAL periodic re-check (off by default)
