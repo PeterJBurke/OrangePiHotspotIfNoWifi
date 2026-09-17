@@ -80,6 +80,68 @@ than reading back what was just set.
 Fixed in the installmavlinkrouterorangepizero3w repo (gotcha #20), since that is
 where the power-save handling lives.
 
+## Changes since first deployment (2026-09-17, later)
+
+The failsafe was installed and AP mode proven, then the user tried to test the
+fallback by putting a wrong password for their main network in
+`/etc/wifi-failsafe.conf` and rebooting. Nothing happened. Three things came out
+of that.
+
+### 1. The config file is now authoritative
+
+NetworkManager keeps its own copy of every Wi-Fi password, and
+`/etc/wifi-failsafe.conf` was read *only* by `check_wifi.sh`. So a wrong
+password there changed nothing: the board connected normally with NM's stored
+password, and the script correctly saw "I am on a wanted network" and stood
+down. The config file was effectively decorative.
+
+`check_wifi.sh` now pushes the config's passwords into the matching NM profiles
+before judging anything, and bounces the link if it changed the password of the
+connection it is currently riding on.
+
+**Trade-off, deliberately accepted:** a typo in the config will now break a
+working connection. That is the cost of one source of truth, and it is what the
+hotspot fallback is for.
+
+### 2. The first listed network is now genuinely preferred
+
+The order of `SSIDS` was only honoured when starting from *disconnected*. If NM
+had already autoconnected to a later entry, the script saw a wanted network and
+stopped — so in the common case the order meant nothing.
+
+It now determines which entry it landed on and, if that is not the first,
+rescans and switches to the highest-priority network in range. It also sets
+`connection.autoconnect-priority` in descending order so NM's own autoconnect
+agrees rather than racing it.
+
+Verified against six mocked cases including an SSID with spaces.
+
+### 3. Everything is logged to disk
+
+`/var/log/wifi-failsafe.log`, a header per boot plus a `RESULT:` line, so there
+is a durable record across power cycles rather than only what journald kept.
+Trimmed to the last 500 lines past 256KB.
+
+### Also added
+
+`sudo /usr/local/bin/check_wifi.sh --dry-run` — reports the networks it will try
+in order, which are in range, whether NM's stored password agrees with the
+config (`matches` / `DIFFERS`), and what it would do at boot. Changes nothing;
+verified it exits before the password sync runs.
+
+### Gotcha for the config file
+
+**No commas between entries.** It is a bash array. A trailing comma is swallowed
+into the entry, so the SSID still parses correctly while the password silently
+gains a `,` and that network can never authenticate — an invisible failure.
+
+### Still untested
+
+The fallback itself has never fired in anger. AP mode is proven (see the test
+result above), and the decision logic is unit-tested against mocks, but no boot
+has yet gone: known network unreachable -> try the next -> start the hotspot.
+The user was about to test exactly that.
+
 ## Important distinction
 
 The 8-minute auto-revert exists **only in `test-ap-capability.sh`**.
