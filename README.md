@@ -78,8 +78,9 @@ Your networks and the hotspot name/password live in one file:
 sudo nano /etc/wifi-failsafe.conf
 ```
 
-You can list more than one network; they are tried in order. Note there are
-**no commas** between the lines:
+You can list more than one network. **The first one listed is preferred** — if
+the Pi ends up on a later one but the first is in range, it switches to the
+first. Note there are **no commas** between the lines:
 
 ```
 SSIDS=(
@@ -97,19 +98,30 @@ the next reboot.
 
 ## Checking it works
 
+See what it did on the last few boots:
+
+```
+sudo cat /var/log/wifi-failsafe.log
+```
+
+Each boot is logged, with what it tried and how it turned out:
+
+```
+================ boot 2026-09-17 14:05:28 ================
+2026-09-17 14:05:28  waiting up to 90s for wlan0 to settle...
+2026-09-17 14:05:31  connected to 'HomeWiFi' after 3s (first choice) -- nothing to do.
+```
+
 See the networks it will try, and what it would do, without changing anything:
 
 ```
 sudo /usr/local/bin/check_wifi.sh --dry-run
 ```
 
+Also:
+
 ```
 systemctl status check_wifi
-```
-
-To see what it did on the last boot:
-
-```
 journalctl -u check_wifi -b
 ```
 
@@ -120,9 +132,14 @@ For a full test of the hotspot, and for troubleshooting, see
 
 At boot the Pi waits for WiFi to come up, then:
 
-* If it connected to one of your networks — nothing happens.
-* If not, it tries each of your networks in turn.
+* If it connected to the **first** network on your list — nothing happens.
+* If it connected to a later one, it checks whether an earlier one is in range
+  and switches if so.
+* If it is not connected at all, it tries each of your networks in order.
 * If none of them work, it starts the `OPiRescue` hotspot on `10.42.0.1`.
+
+Everything it tried is written to `/var/log/wifi-failsafe.log`, one section per
+boot.
 
 The hotspot is marked so it never takes over a normal boot, and the script never
 deletes the WiFi settings you rely on.

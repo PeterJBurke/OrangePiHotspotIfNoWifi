@@ -34,10 +34,29 @@ IFACE="${IFACE:-wlan0}"
 SETTLE_SECS="${SETTLE_SECS:-90}"     # how long to let NM associate before judging
 CONNECT_WAIT="${CONNECT_WAIT:-25}"   # per-SSID association timeout
 
-log() { echo "[wifi-failsafe] $*"; }
+LOGFILE="${LOGFILE:-/var/log/wifi-failsafe.log}"
+
+# Log to the journal AND to disk, so there is a durable record of what was
+# tried on each boot even if journald is volatile or the board is power-cycled.
+log() {
+    echo "[wifi-failsafe] $*"
+    [ -n "${LOGFILE:-}" ] && printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOGFILE" 2>/dev/null || true
+}
+
+# Keep the file from growing without bound.
+rotate_log() {
+    [ -f "$LOGFILE" ] || return 0
+    local sz; sz=$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)
+    if [ "$sz" -gt 262144 ]; then
+        tail -n 500 "$LOGFILE" > "${LOGFILE}.tmp" 2>/dev/null && mv "${LOGFILE}.tmp" "$LOGFILE"
+    fi
+}
 
 [ "$(id -u)" -eq 0 ] || { log "ERROR: must run as root"; exit 1; }
 command -v nmcli >/dev/null || { log "ERROR: nmcli not found"; exit 1; }
+
+rotate_log
+{ echo; echo "================ boot $(date '+%Y-%m-%d %H:%M:%S') ================"; } >> "$LOGFILE" 2>/dev/null || true
 
 # ---------------------------------------------------------------- config
 if [ ! -r "$CONF" ]; then
@@ -179,6 +198,7 @@ ssid_is_wanted() {
 # connection. That is the point -- but it is why the hotspot fallback exists.
 sync_passwords() {
     local entry ssid pass uuid stored changed_active=0 n=0
+    local PRIO=100
     local active_uuid
     active_uuid="$(nmcli -t -f GENERAL.CON-UUID device show "$IFACE" 2>/dev/null | cut -d: -f2-)"
 
@@ -190,6 +210,12 @@ sync_passwords() {
                   [ "$(nmcli -g 802-11-wireless.ssid connection show "$u" 2>/dev/null)" = "$ssid" ] && echo "$u"
               done | head -1)"
         [ -n "$uuid" ] || continue    # no profile yet; it gets created on connect
+
+        # Tell NetworkManager the order matters too, so its own autoconnect
+        # prefers the first entry rather than whichever it saw last.
+        nmcli connection modify "$uuid" connection.autoconnect yes \
+            connection.autoconnect-priority "$PRIO" 2>/dev/null || true
+        PRIO=$((PRIO - 10))
 
         stored="$(nmcli -s -g 802-11-wireless-security.psk connection show "$uuid" 2>/dev/null)"
         if [ "$stored" != "$pass" ]; then
@@ -225,7 +251,40 @@ while [ "$waited" -lt "$SETTLE_SECS" ]; do
     if is_connected; then
         cur="$(current_ssid)"
         if ssid_is_wanted "$cur"; then
-            log "connected to '$cur' after ${waited}s -- nothing to do."
+            # Connected to *a* wanted network -- but is it the preferred one?
+            # NetworkManager may have joined whichever it saw first.
+            idx=0; want_idx=-1
+            for e in "${SSIDS[@]}"; do
+                [ "$cur" = "${e%%|*}" ] && { want_idx=$idx; break; }
+                idx=$((idx + 1))
+            done
+            if [ "$want_idx" -le 0 ]; then
+                log "connected to '$cur' after ${waited}s (first choice) -- nothing to do."
+                exit 0
+            fi
+
+            log "connected to '$cur' after ${waited}s, but that is choice #$((want_idx + 1))."
+            log "checking whether a higher-priority network is in range..."
+            INRANGE="$(nmcli -t -f SSID dev wifi list --rescan yes 2>/dev/null | sed 's/\\\\:/:/g')"
+            i=0; switched=0
+            for e in "${SSIDS[@]}"; do
+                [ "$i" -ge "$want_idx" ] && break
+                pref="${e%%|*}"; prefpass="${e#*|}"
+                if printf '%s\n' "$INRANGE" | grep -qxF "$pref"; then
+                    log "  '$pref' (choice #$((i + 1))) is in range -- switching to it"
+                    nmcli device wifi connect "$pref" password "$prefpass" ifname "$IFACE" >/dev/null 2>&1
+                    sleep 8
+                    if [ "$(current_ssid)" = "$pref" ]; then
+                        log "SUCCESS: switched to preferred network '$pref'."
+                        exit 0
+                    fi
+                    log "  could not switch to '$pref'; staying on '$cur'"
+                else
+                    log "  '$pref' (choice #$((i + 1))) is not in range"
+                fi
+                i=$((i + 1))
+            done
+            log "staying on '$cur'."
             exit 0
         fi
         log "connected, but to '$cur' which is not in the wanted list."
@@ -257,6 +316,7 @@ for entry in "${SSIDS[@]}"; do
     while [ "$w" -lt "$CONNECT_WAIT" ]; do
         if is_connected && [ "$(current_ssid)" = "$ssid" ]; then
             log "SUCCESS: connected to '$ssid'."
+            log "RESULT: connected to '$ssid'"
             exit 0
         fi
         sleep 3; w=$((w + 3))
@@ -287,6 +347,7 @@ if nmcli device wifi hotspot ifname "$IFACE" con-name "wifi-failsafe-ap" \
     # A rescue AP must never win a normal boot.
     nmcli connection modify wifi-failsafe-ap connection.autoconnect no 2>/dev/null
     log "SUCCESS: hotspot '$HOTSPOT_SSID' is up. Reach the board at 10.42.0.1"
+    log "RESULT: hotspot mode"
     exit 0
 else
     log "ERROR: hotspot failed to start. Re-enabling autoconnect and retrying Wi-Fi."
