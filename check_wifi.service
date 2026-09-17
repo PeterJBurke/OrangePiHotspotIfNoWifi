@@ -1,0 +1,22 @@
+[Unit]
+Description=Connect to known Wi-Fi, or fall back to a rescue hotspot
+Documentation=file:///home/orangepi/wifi-failsafe/README.md
+# The original raced boot. These three lines only mean something because
+# install.sh also ENABLES NetworkManager-wait-online.service -- an After= on a
+# unit that never starts is inert, which is exactly how the original failed.
+After=NetworkManager.service
+After=NetworkManager-wait-online.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/check_wifi.sh
+# RemainAfterExit=no so the optional timer can re-run it later.
+RemainAfterExit=no
+User=root
+# Never let a failure here block boot or wedge the machine.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

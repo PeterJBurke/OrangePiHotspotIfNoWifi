@@ -1,0 +1,14 @@
+[Unit]
+Description=Periodically re-check Wi-Fi and fall back to hotspot if needed
+
+# OPTIONAL and disabled by default. Think before enabling this on a flying
+# vehicle: a transient Wi-Fi dropout would convert the board into a hotspot
+# mid-mission, taking the telemetry link with it.
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=check_wifi.service
+
+[Install]
+WantedBy=timers.target

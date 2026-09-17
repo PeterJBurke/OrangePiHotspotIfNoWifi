@@ -1,0 +1,17 @@
+# /etc/wifi-failsafe.conf   — mode 0600, root only
+#
+# Credentials live here, NOT inside the script. The upstream Raspberry Pi
+# project stores Wi-Fi passwords in a world-readable file in /usr/local/bin.
+#
+# Networks are tried in order. Format:  "SSID|password"
+# check_wifi.sh REFUSES to run while any placeholder below is unedited.
+SSIDS=(
+  "CHANGEME|PUT_THE_REAL_PASSWORD_HERE"
+# "SecondNetwork|itspassword"
+# "PhoneHotspot|itspassword"
+)
+
+# Rescue hotspot, used only when none of the above are reachable.
+# Reachable at 10.42.0.1 once up. Password must be at least 8 characters.
+HOTSPOT_SSID="OPiRescue"
+HOTSPOT_PASSWORD="orangepi123"
