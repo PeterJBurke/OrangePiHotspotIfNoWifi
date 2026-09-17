@@ -55,6 +55,31 @@ sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer
 
 `check-result.sh` lists any timers still armed, for exactly this reason.
 
+## Front page simplified, 2026-09-17
+
+The README now follows the format of installmavlinkrouter2024: flash the image,
+ssh in, `wget` the installer, run it, edit one line with nano. **Nothing about
+testing appears on the front page.** Dry run, AP capability test and
+troubleshooting moved to [TESTING.md](TESTING.md); the rationale for rewriting
+rather than porting is in [WHY-A-REWRITE.md](WHY-A-REWRITE.md).
+
+`install.sh` is self-bootstrapping, so the single-file `wget` in the README
+works: it downloads whatever components are missing. It is non-interactive (the
+user edits `/etc/wifi-failsafe.conf` with nano), enables the service at boot,
+and never overwrites an existing config.
+
+## Wi-Fi power save — fixed properly 2026-09-17
+
+An audit found power save back **on** despite having been disabled and
+"verified" earlier. NetworkManager reads `conf.d` alphabetically and the last
+file wins; the stock `default-wifi-powersave-on.conf` sorts *after* a `99-`
+prefix, so it silently overrode the setting on every reconnect. Now written as
+`zz-mavlink-wifi-powersave-off.conf` and verified by bouncing the link rather
+than reading back what was just set.
+
+Fixed in the installmavlinkrouterorangepizero3w repo (gotcha #20), since that is
+where the power-save handling lives.
+
 ## Important distinction
 
 The 8-minute auto-revert exists **only in `test-ap-capability.sh`**.
