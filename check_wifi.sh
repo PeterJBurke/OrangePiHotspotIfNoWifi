@@ -58,13 +58,38 @@ command -v nmcli >/dev/null || { log "ERROR: nmcli not found"; exit 1; }
 rotate_log
 { echo; echo "================ boot $(date '+%Y-%m-%d %H:%M:%S') ================"; } >> "$LOGFILE" 2>/dev/null || true
 
+# Never exit silently. A previous version died between writing the boot header
+# and its first log line -- leaving an empty section in the log and no clue why,
+# on the one boot that mattered. Now every exit is accounted for.
+_finish() {
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log "EXITED with status $rc at line ${_last_line:-?} -- see above"
+    fi
+}
+trap _finish EXIT
+trap '_last_line=$LINENO' DEBUG
+
 # ---------------------------------------------------------------- config
 if [ ! -r "$CONF" ]; then
     log "ERROR: $CONF not found. Refusing to run."
     exit 1
 fi
+
+# Check the config parses BEFORE sourcing it. Sourcing a broken file can take
+# the whole script down before it can report anything.
+if ! bash -n "$CONF" 2>/tmp/.wififailsafe-conferr; then
+    log "ERROR: $CONF has a syntax error and cannot be read:"
+    while IFS= read -r l; do log "    $l"; done < /tmp/.wififailsafe-conferr
+    log "    Common cause: a stray comma between entries, or an unclosed )."
+    rm -f /tmp/.wififailsafe-conferr
+    exit 1
+fi
+rm -f /tmp/.wififailsafe-conferr
+
 # shellcheck disable=SC1090
-. "$CONF"
+. "$CONF" || { log "ERROR: failed to load $CONF"; exit 1; }
+log "loaded $CONF"
 
 HOTSPOT_SSID="${HOTSPOT_SSID:-}"
 HOTSPOT_PASSWORD="${HOTSPOT_PASSWORD:-}"
@@ -72,6 +97,11 @@ HOTSPOT_PASSWORD="${HOTSPOT_PASSWORD:-}"
 [ ${#HOTSPOT_PASSWORD} -ge 8 ] || { log "ERROR: HOTSPOT_PASSWORD must be >= 8 chars"; exit 1; }
 
 # SSIDS is a bash array of "ssid|password" entries.
+if [ -z "${SSIDS+x}" ]; then
+    log "ERROR: $CONF defines no SSIDS array at all. Refusing to run."
+    log "    Expected:  SSIDS=( \"MyNetwork|mypassword\" )"
+    exit 1
+fi
 if [ "${#SSIDS[@]}" -eq 0 ]; then
     log "ERROR: no SSIDS configured in $CONF. Refusing to run."
     exit 1
@@ -95,6 +125,27 @@ for entry in "${SSIDS[@]}"; do
     if [ "$_pass" = "$_ssid" ]; then
         log "WARNING: password identical to SSID for '$_ssid' -- is that right?"
     fi
+    # A trailing comma is swallowed into the password, so the SSID still looks
+    # right while that network can never authenticate. Catch it explicitly.
+    case "$_pass" in
+        *,)
+            log "ERROR: password for '$_ssid' ends with a comma."
+            log "       This is a bash array -- do NOT put commas between entries."
+            log "       Write:   \"$_ssid|thepassword\""
+            log "       Not:     \"$_ssid|thepassword\","
+            exit 1 ;;
+    esac
+    case "$entry" in
+        *,*) log "WARNING: entry for '$_ssid' contains a comma -- is that intended?" ;;
+    esac
+done
+
+# Record exactly what was parsed. If a stray comma corrupted a password, the
+# character count here will look wrong for that entry.
+_i=1
+for entry in "${SSIDS[@]}"; do
+    log "network #${_i}: '${entry%%|*}' (password ${#entry} chars incl. name)"
+    _i=$((_i + 1))
 done
 
 # Return the SSID currently associated on $IFACE.
