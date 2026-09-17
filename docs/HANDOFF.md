@@ -4,51 +4,56 @@ Last updated: 2026-09-17, immediately before the first AP capability test.
 
 ## Where things stand
 
+**DONE AND WORKING.** AP mode is proven on this hardware and the failsafe is
+armed at boot.
+
 | | |
 |---|---|
-| Repo | complete, pushed, public |
-| Installed on the board | **yes** — `sudo ./install.sh` has been run |
-| `/etc/wifi-failsafe.conf` | **edited** with the real SSID and password |
-| Dry run | **PASSED** — timer fired in 19s, detached jobs work, logging works |
-| AP capability test | **NOT YET RUN** ← this is the next step |
-| `check_wifi.service` enabled at boot | **NO** — deliberately, until AP mode is proven |
+| Installed + configured | yes |
+| Dry run | passed (timer fired in 19s) |
+| **AP capability test** | **PASSED** — see below |
+| `check_wifi.service` enabled at boot | **yes** |
+| `check_wifi.timer` (periodic re-check) | disabled, deliberately |
+| `hostapd` / `dnsmasq` | masked |
+| `NetworkManager-wait-online` | enabled (fixes the boot race) |
 
-Nothing has touched the Wi-Fi radio yet. The board is on its normal network.
+### AP test result, 2026-09-17
 
-## The next step
-
-```bash
-cd ~/OrangePiHotspotIfNoWifi
-sudo ./test-ap-capability.sh
+```
+13:02:53  hotspot UP    -- AP mode, channel 11 (2.4 GHz), 10.42.0.1
+13:10:44  dead-man's switch fired, punctually at 8 min
+13:10:45  AP profile deleted
+13:10:58  back on the normal network
 ```
 
-SSH drops ~10s later, by design. Then look for a Wi-Fi network named
-**`OPiRescue`** (password `orangepi123`).
+The operator confirmed `OPiRescue` was visible and joinable from another device.
 
-- Wi-Fi restores itself after **8 minutes** whatever happens.
-- If that fails, the board **reboots at 14 minutes** and comes back normally.
+Notable: NetworkManager placed the AP on **2.4 GHz channel 11** even though the
+station link was 5 GHz — good for client compatibility.
 
-Both timers use `--timer-property=AccuracySec=1s`, because systemd's default
-`AccuracySec` is one minute and would let a recovery deadline drift.
+The boot script was then run by hand while connected to a known network and
+behaved correctly:
 
-### When back on the normal network
-
-```bash
-sudo ~/OrangePiHotspotIfNoWifi/check-result.sh
+```
+[wifi-failsafe] waiting up to 90s for wlan0 to settle...
+[wifi-failsafe] connected to '<known ssid>' after 0s -- nothing to do.
 ```
 
-That prints `/var/log/wifi-failsafe.log`, the current network state, and whether
-any timers are still armed.
+Exited immediately, touched nothing. Only then was the service enabled.
 
-### Then, and only if the hotspot actually appeared
+### One gotcha worth remembering
+
+After the test, `wifi-deadman.timer` had already fired and cleaned up, but
+**`wifi-deadman-reboot.timer` was still armed** and would have rebooted the board
+~3 minutes later. The reboot fallback is intentionally scheduled 6 minutes after
+the restore, so it survives a failed restore — but it does not cancel itself when
+the restore succeeds. After any successful test, run:
 
 ```bash
-sudo systemctl enable check_wifi.service
+sudo systemctl stop wifi-deadman.timer wifi-deadman-reboot.timer
 ```
 
-If the hotspot did **not** appear, do not enable it — the fallback would be
-imaginary. The likely cause would be the `aicwf_sdio` driver not really
-supporting AP mode despite `iw list` advertising it.
+`check-result.sh` lists any timers still armed, for exactly this reason.
 
 ## Important distinction
 
