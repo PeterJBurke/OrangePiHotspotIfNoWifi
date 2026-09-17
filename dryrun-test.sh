@@ -10,7 +10,7 @@ echo "1. can we schedule a delayed job (the dead-man's switch)?"
 systemctl stop dryrun-timer.timer 2>/dev/null; systemctl reset-failed dryrun-timer.service 2>/dev/null
 if systemd-run --on-active=20sec --timer-property=AccuracySec=1s --unit=dryrun-timer \
        /bin/bash -c "echo 'TIMER FIRED ok' >> $LOG" >/dev/null 2>&1; then
-    echo "   yes - armed a 30s timer"
+    echo "   yes - armed a 20s timer"
 else
     echo "   NO - timers will not work. Do NOT run the real test."; exit 1
 fi
