@@ -20,6 +20,65 @@ A healthy boot looks like:
 [wifi-failsafe] connected to 'YourNetwork' after 0s -- nothing to do.
 ```
 
+## Check your config without disconnecting
+
+```bash
+sudo /usr/local/bin/check_wifi.sh --dry-run
+```
+
+Shows the networks it will try, in order, what is currently in range, what the
+board is connected to now, and what it *would* do at boot. Changes nothing.
+
+## Why changing the password in the config does NOT test the fallback
+
+This catches people out, and it is worth understanding.
+
+**NetworkManager keeps its own copy of every Wi-Fi password**, in its connection
+profile. `/etc/wifi-failsafe.conf` is read *only* by `check_wifi.sh`. So if you
+put a deliberately wrong password in the config file, nothing happens: the board
+still connects normally using the password NetworkManager already has, and
+`check_wifi.sh` correctly sees "I am on a network in my list" and stands down.
+
+Its job is to answer *"am I on a wanted network?"*, not *"does my config's
+password match?"*.
+
+Remember too that `check_wifi.service` runs **once at boot**. Editing the config
+does nothing until you reboot.
+
+### How to really test the fallback
+
+Pick whichever is least disruptive. All of them make the board genuinely unable
+to reach your network, which is the only thing that triggers the fallback.
+
+**A. Break NetworkManager's stored password** (most convenient, fully reversible)
+
+```bash
+sudo nmcli connection modify 'Orange Pi wireless' wifi-sec.psk 'deliberately-wrong'
+sudo reboot
+```
+
+At boot the board cannot join, so `check_wifi.sh` tries each network in your
+config — note it will *repair* the password from the config file if the config
+has the right one — and starts the hotspot if none work.
+
+To undo, once you are back in (via the hotspot at `10.42.0.1`, or by fixing it):
+
+```bash
+sudo nmcli connection modify 'Orange Pi wireless' wifi-sec.psk 'your-real-password'
+sudo reboot
+```
+
+> If your config file still lists the correct password for that SSID, the script
+> will fix the profile and reconnect — which is a *successful* test of the retry
+> path, just not of the hotspot. To force the hotspot, put a wrong password in
+> **both** the config and the NM profile, or use option B or C.
+
+**B. Turn the router off** — the most realistic test, no changes to the board.
+Power down your access point, reboot the Pi, and watch for the hotspot.
+
+**C. Take it out of range** — carry the board somewhere with no known network and
+power it up. This is the real field scenario.
+
 ## Testing the boot behaviour safely
 
 Run the boot script by hand while connected to a known network. This is exactly

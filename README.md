@@ -92,6 +92,12 @@ HOTSPOT_PASSWORD="orangepi123"
 
 ## Checking it works
 
+See the networks it will try, and what it would do, without changing anything:
+
+```
+sudo /usr/local/bin/check_wifi.sh --dry-run
+```
+
 ```
 systemctl status check_wifi
 ```

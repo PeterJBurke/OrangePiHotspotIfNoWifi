@@ -26,6 +26,9 @@
 
 set -u
 
+DRY_RUN=0
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+
 CONF="${CONF:-/etc/wifi-failsafe.conf}"
 IFACE="${IFACE:-wlan0}"
 SETTLE_SECS="${SETTLE_SECS:-90}"     # how long to let NM associate before judging
@@ -80,6 +83,52 @@ done
 # "Orange Pi wireless" while the SSID is something else entirely. Comparing the
 # profile name against a list of SSIDs silently never matches, and the script
 # would tear down a perfectly good connection. Resolve the profile to its SSID.
+if [ "$DRY_RUN" = "1" ]; then
+    echo
+    echo "=== DRY RUN — nothing will be changed ==="
+    echo
+    echo "Config file: $CONF"
+    echo "Networks it will try, in order:"
+    i=1
+    for entry in "${SSIDS[@]}"; do
+        echo "   $i. ${entry%%|*}   (password: ${#entry} chars total, hidden)"
+        i=$((i+1))
+    done
+    echo
+    echo "Rescue hotspot if none work:"
+    echo "   SSID     $HOTSPOT_SSID"
+    echo "   password $HOTSPOT_PASSWORD"
+    echo
+    cur_prof="$(nmcli -t -f GENERAL.CONNECTION device show "$IFACE" 2>/dev/null | cut -d: -f2-)"
+    cur="$(nmcli -g 802-11-wireless.ssid connection show "$cur_prof" 2>/dev/null)"
+    [ -z "$cur" ] && cur="$(iw dev "$IFACE" link 2>/dev/null | awk '/SSID:/{ $1=""; sub(/^ /,""); print; exit }')"
+    echo "Right now this board is connected to: ${cur:-<nothing>}"
+    match=0
+    for entry in "${SSIDS[@]}"; do [ "$cur" = "${entry%%|*}" ] && match=1; done
+    echo
+    if [ "$match" = "1" ]; then
+        echo "VERDICT: that IS in your list, so at boot it would do nothing."
+        echo "         This is the normal, healthy case."
+    elif [ -n "$cur" ]; then
+        echo "VERDICT: connected, but '$cur' is NOT in your list."
+        echo "         At boot it would try your listed networks instead."
+    else
+        echo "VERDICT: not connected. At boot it would try each listed network,"
+        echo "         then start the '$HOTSPOT_SSID' hotspot if none worked."
+    fi
+    echo
+    echo "Which networks are actually in range right now:"
+    nmcli -t -f SSID,SIGNAL dev wifi list --rescan yes 2>/dev/null \
+        | awk -F: 'NF&&$1!=""{printf "   %-32s signal %s\n", $1, $2}' | sort -u | head -15
+    echo
+    echo "NOTE: NetworkManager stores its own copy of each password. Changing a"
+    echo "      password in $CONF does NOT stop the board connecting with the"
+    echo "      one NetworkManager already saved. To genuinely test the"
+    echo "      fallback, make the network unreachable — see docs/TESTING.md."
+    echo
+    exit 0
+fi
+
 current_ssid() {
     local prof ssid
     prof="$(nmcli -t -f GENERAL.CONNECTION device show "$IFACE" 2>/dev/null | cut -d: -f2-)"
