@@ -1,6 +1,68 @@
 # Handoff — state of play
 
-Last updated: 2026-09-17, immediately before the first AP capability test.
+Last updated: 2026-10-26.
+
+## Escalation path proven in the field (2026-10-26)
+
+Observed on a board that had been running untouched for a week. A third
+network has been added since the last update, and it is the one in use:
+
+```
+wlan0: connected: wififailsafe-GL-MT6000-ccf   ip 192.168.8.143   signal 100%
+  wififailsafe-GL-MT3000-e23     priority 100   (choice #1)
+  wififailsafe-TP-Link_FD78_5G   priority  90   (choice #2)
+  wififailsafe-GL-MT6000-ccf     priority  80   (choice #3)
+```
+
+The service log for this boot, which is the escalation path running for real
+against two genuinely unavailable networks:
+
+```
+[wifi-failsafe] connected to 'GL-MT6000-ccf' after 0s, but that is choice #3.
+[wifi-failsafe]   scan (rescan): 16 networks seen
+[wifi-failsafe]   'GL-MT3000-e23' (choice #1) not seen in scan, trying anyway
+[wifi-failsafe]   could not join 'GL-MT3000-e23'
+[wifi-failsafe]   'TP-Link_FD78_5G' (choice #2) not seen in scan, trying anyway
+[wifi-failsafe]   could not join 'TP-Link_FD78_5G'
+[wifi-failsafe] staying on 'GL-MT6000-ccf'.
+```
+
+**What this adds to what was already proven.** Previously only "first listed
+network is preferred" was verified, on a board where the first choice was
+available. Now verified:
+
+* it notices it is on a lower-priority network and does not simply accept it
+* it attempts each higher-priority network in order, including ones absent from
+  the scan ("trying anyway")
+* **failed attempts do not cost the working connection** — two joins failed and
+  the board stayed up on choice #3 throughout. This is the property that makes
+  the service safe to leave enabled; the whole run took 19 s.
+
+Still **NOT** tested: the hotspot itself firing, because a configured network
+was reachable the whole time. That test is unchanged and still the one gap.
+
+### Side finding: this board has no RTC, and the clock starts days stale
+
+`timedatectl` reports `RTC time: n/a`, there is no `/dev/rtc`, and the time is
+carried across reboots by `fake-hwclock`. On this boot chrony found the clock
+**577,828 s wrong — 6.7 days** — and stepped it only once the network was up:
+
+```
+Oct 19 23:16:34 chronyd: System clock wrong by 577828.702179 seconds
+Oct 26 15:47:03 chronyd: System clock was stepped by 577828.702179 seconds
+```
+
+So the first ~20 s of every boot is logged under the *previous* shutdown's date.
+The journal above shows exactly that — the first lines are stamped Oct 19 and
+the rest Oct 26, in one 19-second service run.
+
+Consequences: journal timestamps before the step are stale, not wrong by a
+little; and anything that records wall-clock time early in boot, or with no
+network at all, records a date days off. That matters for the autoland work in
+the `installmavlinkrouterorangepizero3w` repo, where `dronefly.py` stamps
+`datetime.now()` into the flight controller's `.BIN` log to line its decision up
+against the mode change. In the drone cage there is no internet, so that stamp
+can be days stale. See that repo's handoff.
 
 ## Where things stand (2026-09-17, latest)
 
@@ -20,6 +82,7 @@ wlan0: connected: wififailsafe-GL-MT3000-e23   ip 192.168.8.143
 | Installed + enabled at boot | yes |
 | Config file is the source of truth | yes — profiles rebuilt from it before NM starts |
 | First-listed network preferred | **proven on hardware** |
+| Escalation through unavailable networks | **proven 2026-10-26, see top** |
 | AP / hotspot mode supported by the radio | **proven** (earlier test) |
 | **Hotspot fallback firing for real** | **NOT yet tested** |
 | `check_wifi.timer` (periodic re-check) | disabled, deliberately |
