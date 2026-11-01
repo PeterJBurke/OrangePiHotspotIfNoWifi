@@ -1,6 +1,76 @@
 # Handoff — state of play
 
-Last updated: 2026-10-26.
+Last updated: 2026-11-01.
+
+## Fallback test attempted 2026-11-01 — inconclusive, waited 28 s too little
+
+First real attempt at the one remaining test. All SSIDs off at boot, no hotspot
+appeared, SSID turned back on after a few minutes. **The script was not at
+fault** — it never reached the hotspot decision before a network returned.
+
+### How long to wait: 7 minutes
+
+Power-on to hotspot visible is about **5 min 45 s** with the four networks
+currently configured. Measured on this boot, boot (`uptime -s` 17:00:39) to the
+hotspot decision was **315 s**:
+
+| phase | time |
+|---|---|
+| boot → service starts | 6 s |
+| settle (`SETTLE_SECS=90`) | 95 s |
+| 4 networks × ~55 s each | 220 s |
+| → hotspot decision | **315 s** |
+| hotspot up + visible in a scan | ~30 s |
+
+It scales with the config, so this number moves as networks are added:
+
+```
+seconds to hotspot ≈ 100 + 55 × (number of configured networks)
+```
+
+The "roughly 2-3 minutes" figure elsewhere in this file is stale — it was
+written when two networks were configured. There are now four.
+
+### What actually happened
+
+The SSID came back at 4 min 47 s. NetworkManager autoconnected to `Burkephone`
+(priority 100) on its own, 28 s before the script finished its last candidate.
+The guard then did the right thing:
+
+```
+no configured network reachable. Considering hotspot fallback.
+still connected to 'Burkephone'. NOT replacing a live connection
+with a hotspot -- that would be a downgrade. Exiting.
+```
+
+AP mode is still supported by the radio (`iw list` lists `AP`), so that check
+would have passed. Decision: **do not change the scripts.** It is a timing
+issue, not a bug.
+
+### Reading the log needs care — the timestamps lie early in boot
+
+This board has no RTC. The log for this run shows
+`trying 'GL-MT6000-ccf'` at `2026-10-29 23:07:21` and `failed` at
+`2026-11-01 17:05:54`, which looks like a three-day hang. It is not. The clock
+booted stale by **237,458 s (2.75 days)** from `fake-hwclock` and chrony stepped
+it mid-run. Convert with `uptime -s` for the real boot time before drawing any
+conclusion from `/var/log/wifi-failsafe.log`.
+
+### The trap that ended this attempt
+
+`Burkephone` is priority #1 and it is a phone. In a pocket with the hotspot on,
+the test is over before it starts. All four must be off or out of range for the
+full 7 minutes: `Burkephone`, `GL-MT3000-e23`, `TP-Link_FD78_5G`,
+`GL-MT6000-ccf`.
+
+### Known inefficiency, deliberately not fixed
+
+On the give-up path the script attempts every configured network blind, with no
+scan — ~3 of the 5 minutes is spent on associations that cannot succeed. It
+already scans in the settle loop and logs `not seen in scan, trying anyway`.
+Gating the attempts on a rescan would cut time-to-hotspot from ~315 s to ~100 s.
+Offered and declined: the script works, and changing live networking risks SSH.
+Recorded here in case the wait becomes annoying later.
 
 ## Escalation path proven in the field (2026-10-26)
 
@@ -84,15 +154,16 @@ wlan0: connected: wififailsafe-GL-MT3000-e23   ip 192.168.8.143
 | First-listed network preferred | **proven on hardware** |
 | Escalation through unavailable networks | **proven 2026-10-26, see top** |
 | AP / hotspot mode supported by the radio | **proven** (earlier test) |
-| **Hotspot fallback firing for real** | **NOT yet tested** |
+| **Hotspot fallback firing for real** | **still NOT tested** — 1 Nov attempt was cut short, see top |
 | `check_wifi.timer` (periodic re-check) | disabled, deliberately |
 
 ### The one remaining test
 
 Make every configured network unreachable and confirm `OPiRescue` appears:
 turn the first network off, leave a wrong password for the second, reboot.
-Expect the hotspot after roughly 2-3 minutes (90s settle, then ~30s per network
-before it gives up).
+Expect the hotspot after about **5 min 45 s** with four networks configured —
+wait a full **7 minutes** before concluding it failed. (The old "2-3 minutes"
+here assumed two networks; see the 1 Nov section at the top.)
 
 **Escape hatch:** turn the first network back on and power-cycle. Its password is
 still correct at priority 100, so the board reconnects there. This test cannot
